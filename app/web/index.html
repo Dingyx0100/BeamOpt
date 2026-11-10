@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BeamOpt Workspace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/css/app.css">
+<script>try{const t=localStorage.getItem('beamopt.theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script>
+</head>
+<body>
+<div class="loading" id="loading">Loading the patient…</div>
+<div class="app">
+  <header class="top">
+    <div class="brand"><b>Beam</b>Opt</div>
+    <div class="pt"><span class="id" id="hPatient"></span><span class="meta" id="hMeta"></span></div>
+    <span class="chip cur" id="curChip"><span class="dot"></span><span id="curTxt"></span></span>
+    <span class="chip" title="Research prototype"><span class="dot"></span>Not for clinical use</span>
+    <span class="spacer"></span>
+    <nav class="tb" id="toolbar">
+      <button class="tbtn" data-drawer="why" title="Where the selected organ's dose comes from, and which limits hold the plan back">Why</button>
+      <button class="tbtn" data-drawer="details">Details</button>
+      <button class="tbtn" data-drawer="deliv">Deliverability</button>
+      <button class="tbtn" data-drawer="export">Export</button>
+      <button class="tbtn" data-drawer="settings">Settings</button>
+    </nav>
+  </header>
+
+  <main class="main" id="main">
+    <section class="col board-col" aria-label="Goals">
+      <div class="colhead"><h2>Goals</h2><span class="sub" id="boardSub"></span></div>
+      <table class="board" id="board"></table>
+      <div class="legend">
+        <span><i class="st pass"></i>meets goal</span>
+        <span><i class="st warn"></i>within limit, misses goal</span>
+        <span><i class="st fail"></i>fails</span>
+        <span><i class="st half" style="--c:var(--pass)"></i>organ only partly in the dose box</span>
+        <span><i class="st na"></i>no dose data</span>
+      </div>
+    </section>
+    <div class="split" id="sp1" role="separator" aria-orientation="vertical" aria-label="Resize goals and revisions" tabindex="0" title="Drag to resize · double-click to reset"></div>
+
+    <section class="col" aria-label="Revisions">
+      <div class="colhead"><h2>Revisions</h2><span class="sub">A result changes the plan only after you keep it or continue from it</span></div>
+      <div class="tl" id="tl"></div>
+    </section>
+    <div class="split" id="sp2" role="separator" aria-orientation="vertical" aria-label="Resize revisions and viewer" tabindex="0" title="Drag to resize · double-click to reset"></div>
+
+    <section class="col viewer" aria-label="Viewer">
+      <div class="colhead">
+        <h2>Viewer</h2><span class="sub" id="vsub"></span>
+        <span class="spacer"></span>
+        <div class="vtools">
+          <div class="seg" role="group" aria-label="Display">
+            <button id="mDose" class="on">Dose</button><button id="mDiff">Δ vs parent</button>
+          </div>
+          <select id="win" aria-label="CT window"></select>
+          <label title="Dose colourwash opacity">Opacity <input id="op" type="range" min="0" max="1" step="0.05" value="0.5"></label>
+          <button class="btn ghost" id="isoBtn" aria-pressed="false">Isodose</button>
+        </div>
+      </div>
+      <div class="vbanner" id="vbanner" hidden></div>
+      <div class="vgrid">
+        <div class="pane"><canvas id="cAx"></canvas><span class="pl">AXIAL</span><span class="pr" id="lAx"></span><span class="pmsg" id="mAx"></span></div>
+        <div class="pane"><canvas id="cCo"></canvas><span class="pl">CORONAL</span><span class="pr" id="lCo"></span><span class="pmsg" id="mCo"></span></div>
+        <div class="pane"><canvas id="cSa"></canvas><span class="pl">SAGITTAL</span><span class="pr" id="lSa"></span><span class="pmsg" id="mSa"></span></div>
+        <div class="pane dvh" id="dvhPane"><svg id="dvh" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Dose-volume histogram"></svg><div class="dvhleg" id="dvhLeg"></div><div class="dvhtip" id="dvhTip" hidden></div><span class="dvhhint">DVH<span>drag to zoom · double-click resets · drag a ▼ marker to set a target</span></span></div>
+      </div>
+      <div class="vfoot" id="vfoot"></div>
+      <div class="readout" id="readout">&nbsp;</div>
+    </section>
+  </main>
+
+  <footer class="cmd">
+    <div class="ctx" id="ctx"></div>
+    <div class="cmdrow">
+      <input id="cmd" type="text" autocomplete="off" placeholder="Ask about the plan or give an instruction, e.g. “lower the esophagus mean dose by 1.5 Gy”">
+      <button class="mic" id="mic" title="Dictate (click to start, click again to stop)" aria-label="Dictate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>
+      <button class="btn primary" id="send">Send</button>
+      <button class="btn danger" id="stop" hidden>Stop</button>
+    </div>
+    <div class="sugg" id="sugg"><span class="lbl">Try</span><span class="hint">Each optimizer solve takes about 30–60 s</span></div>
+  </footer>
+
+  <aside class="drawer" id="drawer" hidden aria-label="Panel">
+    <div class="dh"><h3 id="dTitle"></h3><span class="spacer"></span><button class="btn ghost" id="dClose">Close</button></div>
+    <div class="db" id="dBody"></div>
+  </aside>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</div>
+<script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# Local LLM server for the BeamOpt agent (GPU via Docker Desktop + WSL2 NVIDIA runtime).
+# Usage:  docker compose -f docker/docker-compose.yml up -d
+#         docker exec beamopt-ollama ollama pull qwen3:8b
+services:
+  ollama:
+    image: ollama/ollama:0.12.6
+    container_name: beamopt-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=30m
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+volumes:
+  ollama: {}

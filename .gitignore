@@ -1,0 +1,31 @@
+# Environment
+.venv/
+.env
+.env.*
+
+# Patient data and everything the app / experiments write (plans, sessions, exports, caches, logs)
+portpy_quicklook_data/
+runs/
+experiments/results/
+*.log
+
+# Python / tools
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Notebooks are local scratch work, never committed
+*.ipynb
+
+# Claude Code files are local only
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+**/CLAUDE.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,44 @@
+data:
+  data_dir: portpy_quicklook_data/data   # relative to project root
+  patient_id: Lung_Patient_3
+  protocol: Lung_2Gy_30Fx
+
+optimization:
+  solver: CLARABEL
+  solver_opts: {}
+  gpu:                # GPU solver (src/gpu_qp.py, PyTorch + CUDA): about 9x faster on large patients
+    mode: off         # off | auto (only patients with >= min_beamlets beamlets) | on
+    min_beamlets: 1500
+    tol: 1.0e-4       # every GPU answer is checked; if it fails, that round is re-solved with `solver` above
+  merge_x: 1          # 1 = native 2.5 mm beamlets (exact PortPy problem, ~20-50 s/solve);
+                      # 2 = merge beamlet pairs to 5 mm (~2.5x faster, metrics within ~0.3-0.8 Gy)
+
+llm:
+  provider: ollama
+  base_url: http://localhost:11434      # Docker container beamopt-ollama
+  model: qwen3:8b
+  temperature: 0.0
+  think: false                           # qwen3 "thinking" mode off for speed; try true in experiments
+
+agent:
+  max_iterations: 5
+  ptv_d95_tolerance_gy: 0.5              # default protection when physicist doesn't specify
+  require_approval: false
+  oar_guard:                             # organs the physicist did NOT mention may not get worse by more than:
+    enabled: true
+    tolerance: {Dmean: 1.0, Dmax: 2.0, D2: 2.0, V20: 2.0}   # Gy; V20 in percentage points
+    mode: headroom                       # headroom: also allow up to `headroom` x the room left to the protocol
+    headroom: 0.5                        # limit; a goal met only by breaking a guard is kept for the physicist to
+                                         # decide (outcome needs_decision). mode: fixed = the tolerance above only.
+    max_rise: {Dmax: 5.0, D2: 5.0, Dmean: 3.0, V: 5.0}   # headroom never allows a bigger rise than this without
+                                         # asking (Gy; V = volume metrics in percentage points)
+
+asr:                                     # microphone dictation (faster-whisper, local)
+  model: base.en                         # small.en is more accurate (~480 MB), base.en is faster (~150 MB)
+  language: en
+  device: cpu                            # keep GPU memory for the Ollama model
+  compute_type: int8
+
+ui:
+  plans_dir: runs/plans                  # every solved version: fluence + knobs/metrics JSON
+  exports_dir: runs/exports              # DICOM RTDOSE written only on "Export"

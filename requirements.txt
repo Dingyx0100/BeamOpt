@@ -1,0 +1,36 @@
+# BeamOpt: Python 3.11. Versions are the ones the test suite passes with.
+# Install:  python -m venv .venv  &&  .venv/Scripts/python.exe -m pip install -r requirements.txt
+
+# Plan data, dose and optimization
+portpy[data]==1.2.0
+pydicom==3.0.2
+cvxpy==1.9.3
+clarabel==0.11.1          # default CPU solver
+numpy==2.4.6
+scipy==1.17.1
+pandas==3.1.0
+matplotlib==3.11.2
+
+# Agent (local LLM through Ollama)
+langgraph==1.2.19
+langchain-core==1.7.4
+langchain-ollama==1.1.0
+pydantic==2.14.2
+pyyaml==6.0.3
+tabulate==0.10.0
+requests==2.34.2
+
+# Web workspace
+fastapi==0.162.0
+uvicorn==0.54.0
+python-multipart==0.0.33
+faster-whisper==1.2.1     # microphone dictation
+
+# Tests
+pytest==9.2.0
+httpx==0.28.1             # FastAPI TestClient
+
+# Optional: GPU solver (optimization.gpu.mode: auto | on in configs/agent.yaml). Needs an NVIDIA GPU; install the
+# CUDA build separately:
+#   .venv/Scripts/python.exe -m pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+# Optional: playwright, for headless UI screenshots (uses the installed Edge).
