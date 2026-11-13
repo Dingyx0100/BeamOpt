@@ -7,7 +7,7 @@ optimization:
   solver: CLARABEL
   solver_opts: {}
   gpu:                # GPU solver (src/gpu_qp.py, PyTorch + CUDA): about 9x faster on large patients
-    mode: off         # off | auto (only patients with >= min_beamlets beamlets) | on
+    mode: auto        # off | auto (only patients with >= min_beamlets beamlets) | on
     min_beamlets: 1500
     tol: 1.0e-4       # every GPU answer is checked; if it fails, that round is re-solved with `solver` above
   merge_x: 1          # 1 = native 2.5 mm beamlets (exact PortPy problem, ~20-50 s/solve);

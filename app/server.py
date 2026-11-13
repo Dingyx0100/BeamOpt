@@ -37,7 +37,8 @@ WEB = ROOT / 'app' / 'web'
 PORT = int(UI.get('port', 7861))
 STAGES = {'understand': 'Reading request', 'propose': 'Proposing changes', 'apply': 'Checking the change',
           'optimize': 'Solving', 'finalize': 'Choosing the best attempt', 'report': 'Writing the summary',
-          'answer': 'Answering', 'limit': 'Changing the limit', 'refuse': 'Answering', 'restore': 'Restoring'}
+          'answer': 'Answering', 'limit': 'Changing the limit', 'refuse': 'Answering', 'restore': 'Restoring',
+          'reach': 'Checking what is reachable', 'options': 'Building options'}
 
 
 class Stopped(Exception):
@@ -272,6 +273,24 @@ def post_stop():
         w.cancel.set()
         return {'ok': True, 'message': 'Stopping after the current optimizer step…'}
     return {'ok': False, 'message': 'Nothing is running.'}
+
+
+@app.post('/api/revisions/{rid}/options/{key}')
+def post_option(rid: str, key: str):
+    w = ws()
+    if _busy(w):
+        raise HTTPException(409, 'Wait for the running request to finish.')
+    try:
+        with w.lock:
+            r = w.revlog.choose(rid, key, w.session)
+            r.changes = w.knob_diff(r.start_version, r.final_version)
+            title = next(o['title'] for o in r.options if o['key'] == key)
+            w.history.append(f'(Physicist picked the option "{title}" for "{r.request}"; the current plan is '
+                             f'version {r.final_version}.)')
+            w.sync()
+    except (KeyError, ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc))
+    return w.revision_payload()
 
 
 @app.post('/api/revisions/{rid}/{action}')

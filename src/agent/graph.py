@@ -1,6 +1,6 @@
 """LangGraph planning agent.
 
-    understand ─┬─(optimize)──► propose ─► apply ─► optimize ─► evaluate ─┬─► finalize ─► report
+    understand ─┬─(optimize)──► propose ─► apply ─► optimize ─► evaluate ─┬─► finalize ─► options ─► report
                 │                  ▲                                   │
                 │                  └──────────── iterate ◄─────────────┘
                 ├─(question)─► answer
@@ -22,6 +22,7 @@ from langgraph.graph import END, START, StateGraph
 from ..plan_session import AGENT_OARS, OVERDOSE_ROIS, TARGET_ROIS, VOXELWISE_ROIS, PlanSession, ValidationError
 from .. import explain as X
 from . import feasibility as F
+from . import options as O
 from . import prompts as P
 from . import reply_check as RC
 from .goals import GUARD_HEADROOM, ResolvedGoal, Check, evaluate, resolve_goal, score_tuple, tradeoffs
@@ -50,6 +51,7 @@ class AgentState(TypedDict, total=False):
     tradeoffs: list[dict]
     reply_checks: list[str]
     feasibility: dict          # floor probes: {'when', 'probes': [{roi, metric, goal, probe, verdict, text}], 'unreachable'}
+    options: list[dict]        # trade-off options (src/agent/options.py), each a solved plan the physicist can pick
 
 
 def fallback_reply(state: dict, changes: list[str], trade: list[dict]) -> str:
@@ -74,6 +76,8 @@ def fallback_reply(state: dict, changes: list[str], trade: list[dict]) -> str:
     notes = state['resolved'].get('notes', '')
     if notes:
         parts.append(notes)
+    if state.get('options'):
+        parts.append('Options to choose from:\n' + O.options_text(state['options']))
     return ' '.join(parts)
 
 
@@ -221,6 +225,10 @@ def decision_note(ask: dict, safe_best: dict | None, start: int) -> str:
     return text
 
 
+GPU_LIMIT_MARGIN_GY = 0.05   # = PlanSession.solve tol_gy: how far a GPU answer may exceed a hard limit (total Gy)
+MIN_PROTOCOL_WEIGHT = 0.25   # the agent may lower a protocol OAR objective to at most this fraction of its weight
+
+
 def _below(x: float) -> float:
     """A suggested limit that really meets an '<= x' goal: 0.01 below x after rounding down (v6 pilot: a mean limit
     rounded to 4.59 left Lung_Patient_36 at 4.590 against a 4.587 goal, 99.4 % of the change)."""
@@ -303,8 +311,12 @@ def build_graph(session: PlanSession, llm, cfg: dict, checkpointer=None, hints: 
     require_approval = bool(acfg.get('require_approval', False))
     keep_ratio = float(acfg.get('partial_keep_cost_ratio', 1.5))   # keep partial only if cost <= ratio * gain
     min_partial = float(acfg.get('partial_keep_min_progress', 0.2))
+    want_options = bool(acfg.get('options', True))
     geo_cache: dict = {}
     goal_llm = structured(llm, PhysicistGoal)
+
+    def _margin() -> float:
+        return GPU_LIMIT_MARGIN_GY if getattr(session, '_gpu_solver', None) is not None else 0.0
 
     def _prop_llm():
         # Rebuilt per call: term ids change when the agent adds objectives.
@@ -501,12 +513,26 @@ def build_graph(session: PlanSession, llm, cfg: dict, checkpointer=None, hints: 
             except Exception as exc:  # noqa: BLE001
                 errs += 1
                 last = str(exc)
+        auto = False
         if proposal is None or not proposal.n_actions():
-            proposal = Proposal(reasoning=f'(no valid proposal: {last[:120]})')
-        actions = [a.model_dump(exclude_none=True) for a in proposal_actions(proposal)]
+            # Round 4: after a rollback the model often proposed nothing (Lung_Patient_197 V20: 4 of 5 attempts).
+            # Fall back to the most direct knob: the full goal, or halfway if the last attempt broke a limit.
+            prev = attempts[-1] if attempts else None
+            frac = 0.5 if prev is not None and prev.get('rolled_back_to') is not None else 1.0
+            acts = [x for c in state['resolved']['checks'] if c['role'] == 'objective'
+                    for x in O.lever_actions(c, c['ref'] + frac * (float(c['threshold']) - c['ref']), session,
+                                             _margin())]
+            why = f'no valid proposal: {last[:120]}' if last else 'the model proposed no change'
+            if acts:
+                auto = True
+                proposal = Proposal(reasoning=f"({why}; using the most direct knob"
+                                              f"{' at half the step' if frac < 1 else ''})")
+            else:
+                proposal = Proposal(reasoning=f'({why})')
+        actions = (acts if auto else [a.model_dump(exclude_none=True) for a in proposal_actions(proposal)])
         return {'llm_calls': calls, 'llm_errors': errs,
                 'attempts': attempts + [{'iteration': state.get('iteration', 0) + 1, 'proposal': proposal.model_dump(),
-                                         'actions': actions, 'applied': [], 'errors': []}],
+                                         'actions': actions, 'applied': [], 'errors': [], 'auto_lever': auto}],
                 'iteration': state.get('iteration', 0) + 1,
                 'events': _ev('propose', proposal.reasoning + '\n' + '\n'.join(f'- {a}' for a in actions),
                               proposal=proposal.model_dump())}
@@ -549,6 +575,13 @@ def build_graph(session: PlanSession, llm, cfg: dict, checkpointer=None, hints: 
                                      f"{t.roi} is an organ the physicist asked to improve or protect; lowering its "
                                      f"weight pushes dose onto it."))
                     continue
+                base = session.protocol_terms.get(a['term_id'])
+                floor_w = None if base is None or t.roi in TARGET_ROIS else round(MIN_PROTOCOL_WEIGHT * base.weight, 4)
+                if floor_w is not None and float(a['weight']) < floor_w:
+                    # Round 4: the model set the cord objective weight to 0 to make room. Keep part of the protection.
+                    notes.append(f"{a['term_id']} weight {float(a['weight']):g} raised to {floor_w:g} "
+                                 f"({MIN_PROTOCOL_WEIGHT:.0%} of the protocol weight; the protocol objective stays)")
+                    a['weight'] = floor_w
             if (a.get('action') == 'set_constraint' and a.get('limit_gy') is not None
                     and str(a.get('roi', '')).upper() not in targets | set(TARGET_ROIS)):
                 # A protective cap on another organ sits at its starting dose, not at the guard edge.
@@ -566,10 +599,13 @@ def build_graph(session: PlanSession, llm, cfg: dict, checkpointer=None, hints: 
                 goal = next((float(c['threshold']) for c in state['resolved']['checks']
                              if c['role'] == 'objective' and c['op'] == '<=' and c['roi'] == roi
                              and c['metric'] == met), None)
-                if goal is not None and goal < lim <= goal + max(0.05, 0.01 * goal):
-                    a['limit_gy'] = _below(goal)
-                    notes.append(f"{roi} {a.get('kind')} limit {lim:g} is above the {goal:g} Gy goal -> "
-                                 f"set to {a['limit_gy']:g} Gy")
+                # With the GPU solver a hard limit may be overshot by up to GPU_LIMIT_MARGIN_GY (its accepted
+                # violation), so a limit AT the goal misses it too (round 4: PTV Dmax limit 62.0 -> 62.009).
+                margin = GPU_LIMIT_MARGIN_GY if getattr(session, '_gpu_solver', None) is not None else 0.0
+                if goal is not None and goal - margin < lim <= goal + max(0.05, 0.01 * goal):
+                    a['limit_gy'] = round(_below(goal) - margin, 2)
+                    notes.append(f"{roi} {a.get('kind')} limit {lim:g} would not reliably meet the {goal:g} Gy goal "
+                                 f"-> set to {a['limit_gy']:g} Gy")
             actions.append(a)
 
         def _apply_all(acts):
@@ -720,6 +756,96 @@ def build_graph(session: PlanSession, llm, cfg: dict, checkpointer=None, hints: 
                 'resolved': {**state['resolved'], 'final_eval': final_eval, 'notes': notes.strip()},
                 'events': _ev('finalize', f'Outcome: {outcome}. {notes}', version=final)}
 
+    def _solve_option(key, base_vid, acts, label, resolved, start_metrics, organs=''):
+        session.revert(base_vid)
+        applied = []
+        for a in acts:
+            try:
+                applied.append(apply_action(session, Action(**a)))
+            except (ValidationError, ValueError, TypeError):
+                pass
+        if not applied:
+            return None
+        v = session.solve(label=label)
+        if not v.ok:
+            return None
+        return O.summarize(key, v, evaluate(resolved, v.metrics), start_metrics, applied, organs)
+
+    def options(state: AgentState):
+        """2-3 solved alternatives when the request ended without a clean answer (needs_decision / partial / not_met).
+        If one of them meets the goal and holds every limit, it becomes the answer (outcome met)."""
+        outcome = state['outcome']
+        if not want_options or outcome not in ('needs_decision', 'partial', 'not_met'):
+            return {'options': []}
+        start, final = state['start_version'], state['final_version']
+        resolved = _resolved_from(state['resolved'])
+        start_metrics = session.get_version(start).metrics
+        objs = [c for c in state['resolved']['checks'] if c['role'] == 'objective']
+        tried = [a for a in state.get('attempts', []) if a.get('eval') and a.get('version') is not None]
+        safe = [a for a in tried if a['eval']['protections_ok'] and a['eval']['progress'] > 0]
+        best_safe = max(safe, key=lambda a: score_tuple(a['eval'])) if safe else None
+        tag, m, opts, new = state['request'][:30], _margin(), [], []
+
+        def existing(key, att):
+            v = session.get_version(att['version'])
+            how = [x for x in att.get('applied') or [] if not x.startswith('(note')]
+            opts.append(O.summarize(key, v, evaluate(resolved, v.metrics), start_metrics,
+                                    [f"attempt {att['iteration']}: " + '; '.join(how)]))
+
+        def solved(o):
+            if o is not None:
+                opts.append(o)
+                new.append(o)
+
+        try:
+            if outcome == 'needs_decision':
+                ask = next((a for a in tried if a['version'] == final), None)
+                if ask is not None:
+                    existing('accept', ask)
+                    broken = [c for c in ask['eval']['checks'] if c['role'] == 'guard' and not c['passed']]
+                    acts = [x for c in broken for x in O.cap_actions(c, m)]
+                    organs = ' and '.join(dict.fromkeys(c['roi'] for c in broken))
+                    solved(_solve_option('capped', final, acts, f'{tag} [option: cap]', resolved, start_metrics,
+                                         organs))
+                if best_safe is not None:
+                    existing('safe', best_safe)
+            else:
+                base = best_safe['version'] if best_safe is not None else start
+                if best_safe is not None:
+                    existing('safe', best_safe)
+                acts = [x for c in objs for x in O.lever_actions(c, float(c['threshold']), session, m)]
+                solved(_solve_option('push', base, acts, f'{tag} [option: push]', resolved, start_metrics))
+                if best_safe is None:
+                    acts = [x for c in objs
+                            for x in O.lever_actions(c, c['ref'] + 0.5 * (float(c['threshold']) - c['ref']), session, m)]
+                    solved(_solve_option('half', start, acts, f'{tag} [option: half]', resolved, start_metrics))
+        finally:
+            session.revert(final)
+
+        upd: dict = {}
+        win = next((o for o in new if o['objectives_met'] and o['protections_ok']), None)
+        notes = state['resolved'].get('notes', '')
+        if win is not None:
+            session.revert(win['version'])
+            if start not in session.checkpoints[-1:]:
+                session.checkpoints.append(start)
+            final_eval = evaluate(resolved, session.current.metrics)
+            why = {'needs_decision': 'met the goal only by pushing other organs past their allowance',
+                   'partial': 'held every limit but reached only part of the goal',
+                   'not_met': 'did not improve the goal while holding every limit'}[outcome]
+            notes = (f"Met by the option \"{win['title']}\" (version {win['version']}). The agent's own attempts "
+                     f"{why}.")
+            upd = {'outcome': 'met', 'final_version': win['version'],
+                   'resolved': {**state['resolved'], 'final_eval': final_eval, 'notes': notes}}
+            final = win['version']
+        for o in opts:
+            o['chosen'] = o['version'] == final
+        if len(opts) < 2 and win is None:
+            opts = []                     # a single option is just the result itself
+        text = O.options_text(opts) if opts else 'No alternative plans could be built.'
+        return {**upd, 'options': opts,
+                'events': _ev('options', ('Promoted to met. ' + notes + '\n' if win else '') + text)}
+
     def report(state: AgentState):
         v = session.get_version(state['final_version'])
         changes = []
@@ -732,7 +858,8 @@ def build_graph(session: PlanSession, llm, cfg: dict, checkpointer=None, hints: 
                                  changes='; '.join(changes) or 'none (plan unchanged)',
                                  checks=P.fmt_checks(state['resolved']['final_eval']['checks']),
                                  tradeoffs=P.fmt_tradeoffs_text(trade),
-                                 notes=state['resolved'].get('notes', ''))
+                                 notes=state['resolved'].get('notes', ''),
+                                 options=O.options_text(state.get('options') or []) or '(none)')
         calls = state.get('llm_calls', 0)
         outcome = state['outcome']
         facts = RC.numbers(prompt) + [float(v.id), float(state['start_version'])]
@@ -902,7 +1029,7 @@ def build_graph(session: PlanSession, llm, cfg: dict, checkpointer=None, hints: 
     g = StateGraph(AgentState)
     for name, fn in [('understand', understand), ('propose', propose), ('apply', apply), ('optimize', optimize),
                      ('finalize', finalize), ('report', report), ('answer', answer), ('restore', restore),
-                     ('refuse', refuse), ('limit', limit), ('reach', reach)]:
+                     ('refuse', refuse), ('limit', limit), ('reach', reach), ('options', options)]:
         g.add_node(name, fn)
     g.add_edge(START, 'understand')
     g.add_conditional_edges('understand', route_intent, ['reach', 'propose', 'answer', 'restore', 'refuse', 'limit'])
@@ -910,7 +1037,8 @@ def build_graph(session: PlanSession, llm, cfg: dict, checkpointer=None, hints: 
     g.add_edge('propose', 'apply')
     g.add_conditional_edges('apply', route_apply, ['optimize', 'propose', 'finalize'])
     g.add_conditional_edges('optimize', route_eval, ['finalize', 'propose', 'reach'])
-    g.add_edge('finalize', 'report')
+    g.add_edge('finalize', 'options')
+    g.add_edge('options', 'report')
     for n in ('report', 'answer', 'restore', 'refuse', 'limit'):
         g.add_edge(n, END)
     return g.compile(checkpointer=checkpointer)

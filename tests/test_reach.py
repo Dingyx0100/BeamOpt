@@ -1,7 +1,10 @@
 """Step 2: reachability before solving (floor probe), the not_reachable outcome, and the rounding-slip snap."""
+import pytest
+
 from src.agent import feasibility as F
 from src.agent.graph import build_graph, reach_options, run_turn
 from src.agent.schemas import GoalItem, PhysicistGoal, Proposal, SetConstraint, SetWeight
+from src.gpu_qp import gpu_available
 from tests.test_graph import CFG, FakeLLM, _session
 
 
@@ -71,5 +74,21 @@ def test_rounding_slip_on_a_goal_limit_is_snapped_below_the_goal():
                    'Proposal': [Proposal(reasoning='', set_constraints=[slip])] * 3})
     out = run_turn(build_graph(s, llm, CFG), f'esophagus mean to {goal} Gy')
     applied = out['attempts'][0]['applied']
-    assert any('set to' in a and 'above the' in a for a in applied), applied
+    assert any('set to' in a and 'would not reliably meet' in a for a in applied), applied
+    assert out['outcome'] == 'met'
+
+
+@pytest.mark.skipif(not gpu_available(), reason='needs CUDA')
+def test_limit_at_the_goal_gets_the_gpu_margin():
+    """Round 4: a PTV Dmax limit exactly at a 62.0 goal came out at 62.009 on the GPU (accepted overshoot)."""
+    s = _session()
+    s.configure_gpu({'mode': 'on'})
+    base = s.current.metrics['ESOPHAGUS']['Dmean']
+    goal = round(base - 0.5, 2)
+    at_goal = SetConstraint(roi='ESOPHAGUS', kind='mean', limit_gy=goal)
+    llm = FakeLLM({'PhysicistGoal': [_goal('ESOPHAGUS', 'Dmean', goal)],
+                   'Proposal': [Proposal(reasoning='', set_constraints=[at_goal])] * 3})
+    out = run_turn(build_graph(s, llm, CFG), f'esophagus mean to {goal} Gy')
+    applied = out['attempts'][0]['applied']
+    assert any(f'set to {round(goal - 0.01 - 0.05, 2):g}' in a for a in applied), applied
     assert out['outcome'] == 'met'

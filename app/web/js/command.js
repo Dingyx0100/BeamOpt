@@ -20,8 +20,8 @@ export function renderCommand() {
   $('ctx').innerHTML = chips.join('');
   const r = rev(S.sel), sugg = [...BASE_SUGG];
   if (r && ['not_met', 'partial'].includes(r.outcome)) sugg.unshift(`Why did ${r.id} not reach the goal?`);
-  const aim = r && r.outcome === 'not_reachable' && /aim for (\S+ \S+ <= [\d.]+ (?:Gy|%))/.exec(r.notes || '');
-  if (aim) sugg.unshift(`Lower ${aim[1].replace('<=', 'to')}.`);
+  const aim = r && r.outcome === 'not_reachable' && /aim for (\S+) (\S+) <= ([\d.]+ (?:Gy|%))/.exec(r.notes || '');
+  if (aim) sugg.unshift(`Lower ${label(aim[1])} ${aim[2]} to ${aim[3]}.`);
   $('sugg').innerHTML = `<span class="lbl">Try</span>${sugg.slice(0, 4).map((s) => `<button data-s="${esc(s)}">${esc(s)}</button>`).join('')}<span class="hint">Each optimizer solve takes about 30–60 s</span>`;
 }
 

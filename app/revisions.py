@@ -38,6 +38,9 @@ class Revision:
     reply: str = ''
     events: list = field(default_factory=list)
     locks: list = field(default_factory=list)
+    options: list = field(default_factory=list)      # solved alternative plans (src/agent/options.py)
+    chosen: str | None = None                        # key of the option the physicist picked
+    reach: list = field(default_factory=list)        # floor probes: [{roi, metric, goal, floor, verdict, bound}]
     created: float = field(default_factory=time.time)
     finished: float | None = None
 
@@ -57,6 +60,15 @@ def _attempts(raw: list) -> list[dict]:
                     'version': a.get('version'), 'auto_adjusted': bool(a.get('auto_adjusted')),
                     'violations': list(ev.get('violations') or []),
                     'progress': ev.get('progress'), 'objectives_met': ev.get('objectives_met')})
+    return out
+
+
+def _reach(feas: dict | None) -> list[dict]:
+    out = []
+    for o in (feas or {}).get('probes') or []:
+        pr = o.get('probe') or {}
+        out.append({'roi': o['roi'], 'metric': o['metric'], 'goal': o.get('goal'), 'floor': pr.get('value'),
+                    'verdict': o.get('verdict'), 'bound': bool(pr.get('bound')), 'text': o.get('text', '')})
     return out
 
 
@@ -122,6 +134,8 @@ class RevisionLog:
         rev.notes = resolved.get('notes', '') or ''
         rev.reply = (state.get('reply') or '').split(REPLY_CUT)[0].strip()
         rev.events = [{k: e.get(k) for k in ('node', 'text', 't')} for e in state.get('events') or []]
+        rev.options = list(state.get('options') or [])
+        rev.reach = _reach(state.get('feasibility'))
         rev.finished = time.time()
         if rev.status in ('review', 'kept'):
             found = self.by_version(current_version)
@@ -149,6 +163,24 @@ class RevisionLog:
         session.revert(r.start_version)
         r.status = 'discarded'
         self.current_id = r.parent or 'R0'
+        return r
+
+    def choose(self, rid: str, key: str, session) -> Revision:
+        """Use one of the latest request's options as its result (it then waits for review like any result)."""
+        r = self.get(rid)
+        if self.running is not None:
+            raise RuntimeError('Wait for the running request to finish.')
+        if r is not self.items[-1]:
+            raise ValueError('Options can only be picked on the latest request.')
+        opt = next((o for o in r.options if o.get('key') == key), None)
+        if opt is None:
+            raise ValueError(f'{rid} has no option {key!r}.')
+        session.revert(opt['version'])
+        r.final_version, r.status, r.kept_reason, r.chosen = opt['version'], 'review', None, key
+        r.checks, r.tradeoffs = list(opt.get('checks') or r.checks), list(opt.get('tradeoffs') or [])
+        for o in r.options:
+            o['chosen'] = o is opt
+        self.current_id = rid
         return r
 
     def branch(self, rid: str, session) -> Revision:

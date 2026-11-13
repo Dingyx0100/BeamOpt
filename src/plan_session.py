@@ -889,7 +889,10 @@ class PlanSession:
             ts = time.time()
             build_s += ts - tb
             try:
-                solver_used, fell_back = self._solve_round(prob)
+                # A GPU answer may violate a row by as much as the constraint-generation check below allows
+                # (tol_gy in total): it is held to the same standard as a CPU answer, not a stricter one.
+                gpu_tol = None if self._gpu_solver is None else max(self._gpu_solver.viol_tol, tol_gy / self.num_fx)
+                solver_used, fell_back = self._solve_round(prob, viol_tol=gpu_tol)
                 fallbacks += fell_back
                 status, value = str(prob.status), (float(prob.value) if prob.value is not None else None)
             except cp.error.SolverError as exc:

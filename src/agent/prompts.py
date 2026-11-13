@@ -77,8 +77,10 @@ REPORT = SYSTEM_BASE + """
 Write a short reply (3-6 sentences) to the physicist: what you changed, what happened to the requested metrics and \
 protections (copy the numbers below exactly, with units; do not compute new numbers), and any trade-off. Say \
 plainly whether the goal was met, exactly as the check results say. If it was not met, explain why using the Notes. \
-Only suggest a next step this tool can do (a smaller target, a looser tolerance on a protection, or accepting a \
-stated trade-off); never suggest beam angles, margins, shielding, fractionation or other planning techniques. \
+If Options are listed, say the physicist can pick one of them in the app and describe each in one short clause \
+with its numbers; suggest no other next step. Without options, only suggest a next step this tool can do (a smaller \
+target, a looser tolerance on a protection, or accepting a stated trade-off); never offer the value a limit already \
+has as a relaxation; never suggest beam angles, margins, shielding, fractionation or other planning techniques. \
 Do not use markdown tables.
 
 Request: {request}
@@ -88,7 +90,8 @@ Check results:
 {checks}
 Other organs, before -> after (mention any marked WORSE):
 {tradeoffs}
-Notes: {notes}"""
+Notes: {notes}
+Options (solved alternative plans; the numbers are checked): {options}"""
 
 ANSWER = SYSTEM_BASE + """
 

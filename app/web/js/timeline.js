@@ -1,5 +1,5 @@
 // Revision timeline: one card per request with its result, cost, attempts and Keep / Discard / Branch.
-import {$, api, esc, fmt, opTxt, timeOf, toast} from './api.js';
+import {$, api, esc, fmt, opTxt, timeOf, toast, unit} from './api.js';
 import {S, emit, label, on, refreshRevisions, rev, select} from './state.js';
 
 const PILL = {working: 'Working', review: 'Awaiting review', kept: 'Kept', discarded: 'Discarded',
@@ -41,6 +41,88 @@ function attemptsHtml(r) {
   return `<details><summary>Attempts (${r.attempts.length})</summary><ul class="att">${li}</ul></details>`;
 }
 
+// Engine text names organs by their structure id (ESOPHAGUS); show the names used everywhere else in the app.
+function plain(t) {
+  const names = S.st?.roi_labels || {};
+  let out = String(t || '');
+  for (const id of Object.keys(names).sort((a, b) => b.length - a.length)) out = out.replaceAll(id, names[id]);
+  return out.replaceAll('<=', '≤').replaceAll('>=', '≥');
+}
+
+const aimOf = (p) => Math.ceil((p.floor + 0.1) * 10) / 10;
+
+function reachHtml(r) {
+  const un = (r.reach || []).filter((p) => p.verdict === 'unreachable' && p.floor !== null && p.floor !== undefined);
+  if (!un.length) return '';
+  const now = (p) => (r.checks || []).find((c) => c.roi === p.roi && c.metric === p.metric)?.actual;
+  const rows = un.map((p) => `<tr><td>${esc(label(p.roi))} <span class="k">${esc(p.metric)}</span></td>
+    <td class="num">${fmt(p.goal, p.metric)}</td><td class="num floor">${p.bound ? '≈ ' : ''}${fmt(p.floor, p.metric)}</td>
+    <td class="num">${fmt(now(p), p.metric)}</td></tr>`).join('');
+  const why = un.map((p) => plain(p.text)).join(' ');
+  const cav = /Caveat: (.*)$/.exec(r.notes || '');
+  const tries = un.map((p) => {
+    const t = `Lower ${label(p.roi)} ${p.metric} to ${aimOf(p)} ${unit(p.metric)}.`;
+    return `<button class="btn" data-fill="${esc(t)}" title="Puts this instruction in the command bar; it is not sent">Try ${esc(p.metric)} ${opTxt('<=')} ${aimOf(p)} ${unit(p.metric)}${p.bound ? ' or higher' : ''}</button>`;
+  }).join('');
+  return `<div class="block"><span class="lbl">What is reachable</span><table class="res reach">
+    <tr class="hd"><td></td><td>Your goal</td><td>Lowest possible</td><td>Now</td></tr>${rows}</table></div>
+    <div class="why note">${esc(why)}${cav ? `<br><span class="muted">${esc(plain(cav[1]))}</span>` : ''}</div>
+    <div class="acts">${tries}</div>`;
+}
+
+function optState(o) {
+  const orgs = [...new Set((o.violations || []).map((v) => v.split(' ')[0]))].map((x) => label(x));
+  const brk = orgs.length > 2 ? `${orgs.length} organ limits` : orgs.join(' and ') + (orgs.length > 1 ? ' limits' : ' limit');
+  if (o.objectives_met && o.protections_ok) return ['pass', 'Meets the goal, holds every limit'];
+  if (o.objectives_met) return ['warn', `Meets the goal, breaks ${brk}`];
+  if (o.protections_ok) return ['warn', `${Math.round(o.progress * 100)}% of the change, holds every limit`];
+  return ['fail', `${Math.round(o.progress * 100)}% of the change, breaks ${brk}`];
+}
+
+function optionsHtml(r) {
+  const os = r.options || [];
+  if (os.length < 2) return '';
+  const keys = [];
+  const add = (roi, metric) => { if (!keys.some((k) => k[0] === roi && k[1] === metric)) keys.push([roi, metric]); };
+  for (const c of os[0].rows) if (c.role === 'objective') add(c.roi, c.metric);
+  add('PTV', 'D95');
+  for (const o of os) for (const c of o.cost) add(c.roi, c.metric);
+  for (const o of os) for (const c of o.rows) if (c.role !== 'objective' && !c.passed) add(c.roi, c.metric);
+  const cell = (o, roi, metric) => {
+    const c = o.checks.find((x) => x.roi === roi && x.metric === metric);
+    const t = o.tradeoffs.find((x) => x.roi === roi && x.metric === metric);
+    const v = c?.actual ?? t?.after;
+    let cls = '';
+    if (c && c.role === 'objective') cls = c.passed ? 'better' : '';
+    else if ((c && c.passed === false) || t?.flag === 'worse') cls = 'worse';
+    return `<td class="num ${cls}">${fmt(v, metric)}</td>`;
+  };
+  const start = (roi, metric) => {
+    for (const o of os) {
+      const t = o.tradeoffs.find((x) => x.roi === roi && x.metric === metric);
+      if (t) return t.before;
+      const c = o.checks.find((x) => x.roi === roi && x.metric === metric);
+      if (c && c.ref !== undefined) return c.ref;
+    }
+    return null;
+  };
+  const goal = (roi, metric) => os[0].rows.find((c) => c.role === 'objective' && c.roi === roi && c.metric === metric);
+  const busy = !!S.revs.running;
+  const last = S.revs.items[S.revs.items.length - 1]?.id === r.id;
+  const head = os.map((o, i) => `<th><span class="on">${i + 1}</span>${esc(plain(o.title))}</th>`).join('');
+  const state = os.map((o) => { const [k, t] = optState(o); return `<td><span class="ost ${k}">${esc(t)}</span></td>`; }).join('');
+  const body = keys.map(([roi, metric]) => {
+    const g = goal(roi, metric);
+    return `<tr><td>${esc(label(roi))} <span class="k">${esc(metric)}${g ? ` ${opTxt(g.op)} ${+(+g.threshold).toFixed(2)}` : ''}</span></td>
+      <td class="num muted">${fmt(start(roi, metric), metric)}</td>${os.map((o) => cell(o, roi, metric)).join('')}</tr>`;
+  }).join('');
+  const use = os.map((o, i) => `<td>${o.chosen ? '<span class="tag">In use</span>'
+    : last ? `<button class="btn" data-opt="${esc(o.key)}" data-n="${i + 1}" data-rid="${r.id}" ${busy ? 'disabled' : ''}>Use ${i + 1}</button>` : ''}</td>`).join('');
+  return `<div class="block"><span class="lbl">Options · each one is a solved plan</span><div class="optwrap"><table class="opts">
+    <tr><th></th><th class="muted">Start</th>${head}</tr><tr class="ostrow"><td></td><td></td>${state}</tr>${body}
+    <tr class="userow"><td></td><td></td>${use}</tr></table></div></div>`;
+}
+
 function steps(r) {
   const live = S.live.get(r.id) || {steps: []};
   const seen = [];
@@ -70,10 +152,19 @@ function card(r) {
     let out = OUTCOME[r.outcome] || OUTCOME[r.status] || '';
     const n = r.attempts?.length || 0;
     if (r.outcome === 'met' && n) out = `Goal met in ${n} attempt${n > 1 ? 's' : ''}.`;
+    const byOpt = r.outcome === 'met' && /^Met by the option/.test(r.notes || '');
+    if (byOpt) {
+      const i = (r.options || []).findIndex((o) => o.chosen);
+      out = `Goal met by option ${i + 1} after ${n} attempt${n > 1 ? 's' : ''} fell short. Keep it, pick another option, or Discard.`;
+    }
     if (r.status === 'discarded') out = 'Discarded. The plan went back to where this request started.';
     if (r.status === 'set_aside') out = 'Set aside when you branched from another plan. You can still branch from it.';
     if (r.kept_reason === 'continued') out += ' Kept because you continued from it.';
     if (r.status === 'stopped' || r.status === 'error') out = r.reply;
+    if (r.chosen) {
+      const i = (r.options || []).findIndex((o) => o.key === r.chosen);
+      if (i >= 0) out = `You picked option ${i + 1}: ${plain(r.options[i].title)}.` + (r.status === 'review' ? ' Keep it or Discard.' : '');
+    }
     if (out) b += `<div>${esc(out)}</div>`;
     const replyFirst = REPLY_FIRST.has(r.outcome) && r.reply && r.status !== 'stopped' && r.status !== 'error';
     if (replyFirst) b += `<div class="why note">${esc(r.reply)}</div>`;
@@ -81,8 +172,10 @@ function card(r) {
       b += `<div class="block"><span class="lbl">Changes</span><ul class="chg">${r.changes.map((c) =>
         `<li><span>${esc(c.what)}${c.detail ? ` <span class="muted">${esc(c.detail)}</span>` : ''}${c.tag ? ` <span class="tag">${esc(c.tag)}</span>` : ''}</span></li>`).join('')}</ul></div>`;
     }
+    const unreachable = r.outcome === 'not_reachable' && (r.reach || []).some((p) => p.verdict === 'unreachable');
     const checks = (r.checks || []).filter((c) => c.actual !== null && c.actual !== undefined);
-    if (checks.length && !replyFirst) {
+    if (unreachable) b += reachHtml(r);
+    else if (checks.length && !replyFirst) {
       b += `<div class="block"><span class="lbl">Result vs ${esc(r.parent || 'start')}</span><table class="res">${checks.map(checkRow).join('')}</table></div>`;
     }
     const worse = (r.tradeoffs || []).filter((t) => t.flag === 'worse');
@@ -90,7 +183,9 @@ function card(r) {
       b += `<div class="block"><span class="lbl">Cost</span><table class="res">${worse.map((t) =>
         `<tr><td>${esc(label(t.roi))} <span class="k">${esc(t.metric)}${t.partial ? ' · part in box' : ''}</span></td><td class="num">${fmt(t.before, t.metric)} → ${fmt(t.after, t.metric)}</td><td class="num worse">${t.delta > 0 ? '+' : ''}${t.delta.toFixed(2)}</td></tr>`).join('')}</table></div>`;
     }
-    if (['not_met', 'not_reachable', 'partial', 'needs_decision'].includes(r.outcome) && r.notes) b += `<div class="why">${esc(r.notes)}</div>`;
+    if (['not_met', 'not_reachable', 'partial', 'needs_decision'].includes(r.outcome) && r.notes && !unreachable) b += `<div class="why">${esc(plain(r.notes))}</div>`;
+    if (byOpt) b += `<div class="why note">${esc(plain(r.notes))}</div>`;
+    b += optionsHtml(r);
     b += attemptsHtml(r);
     if (!replyFirst && r.reply && !['stopped', 'error'].includes(r.status)) {
       b += `<details><summary>Agent's explanation</summary><div class="reply">${esc(r.reply)}</div></details>`;
@@ -129,6 +224,25 @@ export function renderCard(rid) {
 
 export function initTimeline() {
   $('tl').addEventListener('click', async (e) => {
+    const f = e.target.closest('[data-fill]');
+    if (f) {
+      e.stopPropagation();
+      $('cmd').value = f.dataset.fill;
+      $('cmd').focus();
+      return;
+    }
+    const o = e.target.closest('[data-opt]');
+    if (o) {
+      e.stopPropagation();
+      o.disabled = true;
+      try {
+        S.revs = await api(`/api/revisions/${o.dataset.rid}/options/${o.dataset.opt}`, {method: 'POST'});
+        toast(`${o.dataset.rid} now uses option ${o.dataset.n}. Keep it or Discard.`);
+        select(o.dataset.rid);
+        emit('revisions');
+      } catch (err) { toast(err.message, true); o.disabled = false; }
+      return;
+    }
     const b = e.target.closest('[data-act]');
     if (b) {
       e.stopPropagation();

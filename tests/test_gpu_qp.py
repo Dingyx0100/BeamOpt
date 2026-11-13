@@ -46,7 +46,8 @@ def test_session_gpu_plan_matches_cpu_plan():
 
 def test_rejected_gpu_answer_falls_back_to_cpu():
     s = PlanSession(make_case())
-    s.configure_gpu({'mode': 'on', 'viol_tol': -1.0})          # no GPU answer can pass this check
+    s.configure_gpu({'mode': 'on'})
+    s._gpu_solver.max_iter = 1                                 # stops unconverged -> every GPU answer is rejected
     v = s.solve('fallback')
     assert v.ok and v.solver_used == 'CLARABEL' and v.gpu_fallbacks >= 1
 
