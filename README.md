@@ -4,6 +4,14 @@ Research prototype. A medical physicist types an instruction ("reduce the esopha
 coverage"). A local LLM, orchestrated by LangGraph, turns it into bounded changes to the fluence
 optimization, re-solves, checks the result against deterministic dose metrics, and reports. **Not for clinical use.**
 
+## Demo
+
+https://github.com/user-attachments/assets/271de94c-9039-4b64-8d64-6322f164ba24
+
+A physicist request on a lung patient: the agent changes the optimization, re-solves, checks the result against the
+protocol and the organs you did not mention, and the physicist keeps or discards it.
+<sub>CT data: NSCLC-Radiomics (TCIA, CC BY-NC 3.0), via the PortPy dataset. See [citations](#data-licences-and-citations).</sub>
+
 ## Layout
 
 | Path | What it is |
@@ -170,3 +178,57 @@ criteria table marks them UNDETERMINED.
 - `data_info.jsonl`: a file index only.
 - The TCIA metadata.
 - The VMAT plans: prostate only.
+
+## Data, licences and citations
+
+BeamOpt is a non-commercial research prototype. It depends on PortPy and on PortPy's patient data, and both are
+licensed for non-commercial use only.
+
+| Source | Licence | What it means here |
+|---|---|---|
+| [PortPy](https://github.com/PortPy-Project/PortPy) (Python package; `PlanSession` reproduces its optimization problem) | Apache 2.0 with the Commons Clause | Free for non-commercial academic and research use. The Commons Clause forbids selling a product or service whose value derives substantially from PortPy; commercial use needs a separate licence from the PortPy authors. |
+| [PortPy dataset](https://huggingface.co/datasets/PortPy-Project/PortPy_Dataset) (influence matrices, ECHO plans) | CC BY-NC 4.0 | Attribution required, non-commercial use only. |
+| [NSCLC-Radiomics](https://www.cancerimagingarchive.net/collection/nsclc-radiomics/) on TCIA (the lung CT and structures behind the PortPy lung patients) | CC BY-NC 3.0 | Attribution with the data citation and its DOI is required, non-commercial use only. This also covers the CT images in screenshots and the demo video. |
+
+No patient data is stored in this repository: download it from the PortPy dataset (see Setup).
+
+If you use BeamOpt or show results made with it, please cite the sources below.
+
+**PortPy and the PortPy.AI benchmark**
+
+> Jhanwar G, Tefagh M, Huang Q, Golkarieh A, Hong L, Pham H, Taasti VT, Tuomaala S, Magliari A, Folkerts M, Zhou Y,
+> Yang J, Nadeem S, Zarepisheh M. PortPy.AI: A Benchmark for AI and Optimization in Cancer Radiotherapy Planning.
+> Advances in Neural Information Processing Systems (NeurIPS), Evaluations and Datasets Track, 2026.
+
+```bibtex
+@inproceedings{jhanwar2026portpyai,
+  title     = {PortPy.AI: A Benchmark for AI and Optimization in Cancer Radiotherapy Planning},
+  author    = {Jhanwar, Gourav and Tefagh, Mojtaba and Huang, Qijie and Golkarieh, Alireza and Hong, Linda and
+               Pham, Hai and Taasti, Vicki Trier and Tuomaala, Seppo and Magliari, Anthony and Folkerts, Michael and
+               Zhou, Ying and Yang, Jie and Nadeem, Saad and Zarepisheh, Masoud},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS), Evaluations and Datasets Track},
+  year      = {2026}
+}
+```
+
+**NSCLC-Radiomics data** (TCIA data citation)
+
+> Aerts HJWL, Wee L, Rios Velazquez E, Leijenaar RTH, Parmar C, Grossmann P, Carvalho S, Bussink J, Monshouwer R,
+> Haibe-Kains B, Rietveld D, Hoebers F, Rietbergen MM, Leemans CR, Dekker A, Quackenbush J, Gillies RJ, Lambin P.
+> Data From NSCLC-Radiomics (version 4) [Data set]. The Cancer Imaging Archive; 2014.
+> https://doi.org/10.7937/K9/TCIA.2015.PF0M9REI
+
+**NSCLC-Radiomics publication**
+
+> Aerts HJWL, Velazquez ER, Leijenaar RTH, Parmar C, Grossmann P, Carvalho S, Bussink J, Monshouwer R, Haibe-Kains B,
+> Rietveld D, Hoebers F, Rietbergen MM, Leemans CR, Dekker A, Quackenbush J, Gillies RJ, Lambin P. Decoding tumour
+> phenotype by noninvasive imaging using a quantitative radiomics approach. Nature Communications 5, 4006 (2014).
+> https://doi.org/10.1038/ncomms5006
+
+**The Cancer Imaging Archive**
+
+> Clark K, Vendt B, Smith K, Freymann J, Kirby J, Koppel P, Moore S, Phillips S, Maffitt D, Pringle M, Tarbox L,
+> Prior F. The Cancer Imaging Archive (TCIA): Maintaining and Operating a Public Information Repository. Journal of
+> Digital Imaging 26(6), 1045–1057 (2013). https://doi.org/10.1007/s10278-013-9622-7
+
+BeamOpt is not affiliated with or endorsed by the PortPy authors, MSKCC or TCIA.

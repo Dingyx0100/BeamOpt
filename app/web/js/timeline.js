@@ -184,7 +184,7 @@ function card(r) {
         `<tr><td>${esc(label(t.roi))} <span class="k">${esc(t.metric)}${t.partial ? ' · part in box' : ''}</span></td><td class="num">${fmt(t.before, t.metric)} → ${fmt(t.after, t.metric)}</td><td class="num worse">${t.delta > 0 ? '+' : ''}${t.delta.toFixed(2)}</td></tr>`).join('')}</table></div>`;
     }
     if (['not_met', 'not_reachable', 'partial', 'needs_decision'].includes(r.outcome) && r.notes && !unreachable) b += `<div class="why">${esc(plain(r.notes))}</div>`;
-    if (byOpt) b += `<div class="why note">${esc(plain(r.notes))}</div>`;
+    if (byOpt && !r.chosen) b += `<div class="why note">${esc(plain(r.notes))}</div>`;   // describes the promoted option only
     b += optionsHtml(r);
     b += attemptsHtml(r);
     if (!replyFirst && r.reply && !['stopped', 'error'].includes(r.status)) {
